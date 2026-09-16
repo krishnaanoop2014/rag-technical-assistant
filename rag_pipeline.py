@@ -10,9 +10,9 @@ This module handles:
     4. Retrieving the most relevant chunks for a user query
     5. Calling Claude to generate a grounded answer using only the retrieved context
 
-Everything runs locally except the final answer-generation call to the
-Anthropic API, so you only need an ANTHROPIC_API_KEY to get answers -
-embeddings and storage are free and run on your machine.
+Everything runs locally except the final answer-generation call to Groq's
+free API, so you only need a GROQ_API_KEY to get answers - embeddings and
+storage are free and run on your machine.
 """
 
 import os
@@ -23,7 +23,7 @@ from typing import List, Dict
 import chromadb
 from chromadb.utils import embedding_functions
 from pypdf import PdfReader
-from anthropic import Anthropic
+from groq import Groq
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -32,7 +32,8 @@ from anthropic import Anthropic
 PERSIST_DIR = os.getenv("RAG_PERSIST_DIR", "./chroma_store")
 COLLECTION_NAME = os.getenv("RAG_COLLECTION", "technical_docs")
 EMBEDDING_MODEL_NAME = os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+# Groq's free tier hosts open-weight models (Llama, etc.) at very low latency.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 CHUNK_SIZE = 800       # characters per chunk
 CHUNK_OVERLAP = 120    # characters of overlap between consecutive chunks
@@ -155,12 +156,12 @@ def build_context_block(hits: List[Dict]) -> str:
     return "\n\n".join(blocks)
 
 
-def generate_answer(question: str, hits: List[Dict], client: Anthropic = None) -> str:
-    """Send the retrieved context + question to Claude and return the answer."""
+def generate_answer(question: str, hits: List[Dict], client: Groq = None) -> str:
+    """Send the retrieved context + question to a Groq-hosted LLM and return the answer."""
     if not hits:
         return "I couldn't find anything relevant in the ingested documents to answer that."
 
-    client = client or Anthropic()  # reads ANTHROPIC_API_KEY from env
+    client = client or Groq()  # reads GROQ_API_KEY from env
     context = build_context_block(hits)
 
     user_message = (
@@ -169,14 +170,16 @@ def generate_answer(question: str, hits: List[Dict], client: Anthropic = None) -
         "Answer using only the context above."
     )
 
-    response = client.messages.create(
-        model=ANTHROPIC_MODEL,
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
         max_tokens=800,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}],
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
     )
 
-    return "".join(block.text for block in response.content if block.type == "text")
+    return response.choices[0].message.content
 
 
 # ---------------------------------------------------------------------------
